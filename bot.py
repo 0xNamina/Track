@@ -31,7 +31,7 @@ CHAINS = {
     'KAVA': {'name': 'Kava', 'emoji': '🟢'},
     'CANTO': {'name': 'Canto', 'emoji': '🎵'},
     'SUI': {'name': 'Sui', 'emoji': '🌊'},
-    'APT': {'name': 'Aptos', 'emoji': '🍎'},
+    'APT': {'name': 'Aptos', 'emoji': '🎯'},
     'SEI': {'name': 'Sei', 'emoji': '⚡'},
     'INJ': {'name': 'Injective', 'emoji': '💉'},
     'TON': {'name': 'TON', 'emoji': '💠'},
@@ -56,24 +56,28 @@ class TwitterTelegramTracker:
         
         logger.info("Bot berhasil diinisialisasi")
     
+    def escape_html(self, text):
+        """Escape HTML characters"""
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler untuk /start command"""
         chat_id = update.effective_chat.id
         self.chat_ids.add(chat_id)
         
         welcome_msg = """
-╔══════════════════════════╗
+╔═══════════════════════╗
 ║  🔍 TWITTER ACTIVITY BOT  ║
-╚══════════════════════════╝
+╚═══════════════════════╝
 
-🎯 *Track Aktivitas Real-Time:*
+🎯 <b>Track Aktivitas Real-Time:</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 📝 Tweet Baru
 🔁 Retweet
 💬 Reply/Komentar
 👥 Following Baru
 
-📋 *Perintah:*
+📋 <b>Perintah:</b>
 ━━━━━━━━━━━━━━━━━━━━━━
 /add @username - Tambah tracking
 /list - Lihat daftar
@@ -82,10 +86,10 @@ class TwitterTelegramTracker:
 /stop_monitoring - Stop track
 /status - Cek status
 
-💡 *Label chain untuk identifikasi CT*
-*mana yang aktif di chain apa*
+💡 <b>Label chain untuk identifikasi CT
+mana yang aktif di chain apa</b>
         """
-        await update.message.reply_text(welcome_msg, parse_mode='Markdown')
+        await update.message.reply_text(welcome_msg, parse_mode='HTML')
         logger.info(f"User baru: {chat_id}")
     
     async def add_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,7 +98,7 @@ class TwitterTelegramTracker:
             await update.message.reply_text(
                 "❌ Gunakan: /add @username\n"
                 "Contoh: /add @lookonchain",
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return
         
@@ -132,17 +136,17 @@ class TwitterTelegramTracker:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 msg = f"""
-✅ *Akun Ditemukan*
+✅ <b>Akun Ditemukan</b>
 
 👤 @{username}
-📝 {user.data.name}
+📝 {self.escape_html(user.data.name)}
 👥 {user.data.public_metrics['followers_count']:,} followers
 
-⛓️ *Pilih Chain:*
+⛓️ <b>Pilih Chain:</b>
 Label untuk identifikasi CT ini aktif di chain mana
                 """
                 
-                await loading_msg.edit_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
+                await loading_msg.edit_text(msg, parse_mode='HTML', reply_markup=reply_markup)
                 
         except Exception as e:
             await loading_msg.edit_text(f"❌ Error: {str(e)}")
@@ -177,15 +181,15 @@ Label untuk identifikasi CT ini aktif di chain mana
             
             chain_info = CHAINS[chain_code]
             msg = f"""
-✅ *Berhasil Ditambahkan*
+✅ <b>Berhasil Ditambahkan</b>
 
 👤 @{username}
-📝 {user_data.name}
+📝 {self.escape_html(user_data.name)}
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
 Ketik /start_monitoring untuk mulai!
             """
-            await query.edit_message_text(msg, parse_mode='Markdown')
+            await query.edit_message_text(msg, parse_mode='HTML')
             
             del self.pending_adds[chat_id]
             logger.info(f"Ditambahkan: @{username} ({chain_code})")
@@ -197,7 +201,7 @@ Ketik /start_monitoring untuk mulai!
         """Handler untuk /list command"""
         if not self.tracked_accounts:
             await update.message.reply_text(
-                "📭 Belum ada tracking\n\n"
+                "🔭 Belum ada tracking\n\n"
                 "Gunakan: /add @username"
             )
             return
@@ -210,20 +214,20 @@ Ketik /start_monitoring untuk mulai!
                 chains_groups[chain] = []
             chains_groups[chain].append((username, data))
         
-        msg = "📋 *Daftar Tracking*\n\n"
+        msg = "📋 <b>Daftar Tracking</b>\n\n"
         
         for chain_code in sorted(chains_groups.keys()):
             chain_info = CHAINS[chain_code]
             accounts = chains_groups[chain_code]
             
-            msg += f"\n{chain_info['emoji']} *{chain_info['name']}*\n"
+            msg += f"\n{chain_info['emoji']} <b>{chain_info['name']}</b>\n"
             for username, data in accounts:
-                msg += f"  • @{username} - {data['name']}\n"
+                msg += f"  • @{username} - {self.escape_html(data['name'])}\n"
         
         msg += f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
         msg += f"📊 Total: {len(self.tracked_accounts)} akun"
         
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await update.message.reply_text(msg, parse_mode='HTML')
     
     async def remove_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler untuk /remove command"""
@@ -307,16 +311,17 @@ Ketik /start_monitoring untuk mulai!
     async def notify_tweet(self, username, tweet, display_name, chain):
         """Notifikasi tweet baru"""
         chain_info = CHAINS[chain]
+        text = self.escape_html(tweet.text)
         
         msg = f"""
-📝 *TWEET BARU*
+📝 <b>TWEET BARU</b>
 
-👤 @{username} ({display_name})
+👤 @{username} ({self.escape_html(display_name)})
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
-{tweet.text[:400]}{'...' if len(tweet.text) > 400 else ''}
+{text[:400]}{'...' if len(tweet.text) > 400 else ''}
 
-🔗 [Lihat](https://twitter.com/{username}/status/{tweet.id})
+🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
 ⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
         """
         await self.send_to_all(msg)
@@ -324,16 +329,17 @@ Ketik /start_monitoring untuk mulai!
     async def notify_retweet(self, username, tweet, display_name, chain):
         """Notifikasi retweet"""
         chain_info = CHAINS[chain]
+        text = self.escape_html(tweet.text)
         
         msg = f"""
-🔁 *RETWEET*
+🔁 <b>RETWEET</b>
 
-👤 @{username} ({display_name})
+👤 @{username} ({self.escape_html(display_name)})
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
-{tweet.text[:400]}{'...' if len(tweet.text) > 400 else ''}
+{text[:400]}{'...' if len(tweet.text) > 400 else ''}
 
-🔗 [Lihat](https://twitter.com/{username}/status/{tweet.id})
+🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
 ⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
         """
         await self.send_to_all(msg)
@@ -341,16 +347,17 @@ Ketik /start_monitoring untuk mulai!
     async def notify_reply(self, username, tweet, display_name, chain):
         """Notifikasi reply/comment"""
         chain_info = CHAINS[chain]
+        text = self.escape_html(tweet.text)
         
         msg = f"""
-💬 *REPLY/KOMENTAR*
+💬 <b>REPLY/KOMENTAR</b>
 
-👤 @{username} ({display_name})
+👤 @{username} ({self.escape_html(display_name)})
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
-{tweet.text[:400]}{'...' if len(tweet.text) > 400 else ''}
+{text[:400]}{'...' if len(tweet.text) > 400 else ''}
 
-🔗 [Lihat](https://twitter.com/{username}/status/{tweet.id})
+🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
 ⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
         """
         await self.send_to_all(msg)
@@ -360,17 +367,17 @@ Ketik /start_monitoring untuk mulai!
         chain_info = CHAINS[chain]
         
         msg = f"""
-👥 *FOLLOWING BARU*
+👥 <b>FOLLOWING BARU</b>
 
-👤 @{username} ({display_name})
+👤 @{username} ({self.escape_html(display_name)})
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
 🆕 Baru follow:
 👤 @{new_user.username}
-📝 {new_user.name}
+📝 {self.escape_html(new_user.name)}
 👥 {new_user.public_metrics['followers_count']:,} followers
 
-🔍 [Cek Profil](https://twitter.com/{new_user.username})
+🔍 <a href="https://twitter.com/{new_user.username}">Cek Profil</a>
 ⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}
         """
         await self.send_to_all(msg)
@@ -382,7 +389,7 @@ Ketik /start_monitoring untuk mulai!
                 await self.telegram_app.bot.send_message(
                     chat_id=chat_id,
                     text=message,
-                    parse_mode='Markdown',
+                    parse_mode='HTML',
                     disable_web_page_preview=True
                 )
             except Exception as e:
@@ -423,7 +430,7 @@ Ketik /start_monitoring untuk mulai!
         ])
         
         msg = f"""
-✅ *Monitoring Aktif!*
+✅ <b>Monitoring Aktif!</b>
 
 📊 Tracking:
 {chains_text}
@@ -431,7 +438,7 @@ Ketik /start_monitoring untuk mulai!
 ⏱️ Interval: 60 detik
 📢 Notifikasi: Real-time
         """
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await update.message.reply_text(msg, parse_mode='HTML')
         logger.info("Monitoring dimulai")
     
     async def stop_monitoring_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -456,7 +463,7 @@ Ketik /start_monitoring untuk mulai!
         ]) if chain_counts else "  Belum ada"
         
         msg = f"""
-📊 *Status Bot*
+📊 <b>Status Bot</b>
 
 {status_icon} {status_text}
 
@@ -466,7 +473,7 @@ Ketik /start_monitoring untuk mulai!
 ⛓️ Per Chain:
 {chains_list}
         """
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await update.message.reply_text(msg, parse_mode='HTML')
     
     def run(self):
         """Start bot"""
