@@ -491,16 +491,37 @@ Ketik /start_monitoring untuk mulai!
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
-    TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
-    if not TWITTER_BEARER_TOKEN or not TELEGRAM_BOT_TOKEN:
-        logger.error("❌ Environment variables tidak ditemukan!")
-        logger.error("Set TWITTER_BEARER_TOKEN dan TELEGRAM_BOT_TOKEN")
+    # Try to get OAuth credentials first
+    twitter_credentials = {}
+    
+    if os.getenv("TWITTER_API_KEY") and os.getenv("TWITTER_API_SECRET"):
+        twitter_credentials = {
+            'api_key': os.getenv("TWITTER_API_KEY"),
+            'api_secret': os.getenv("TWITTER_API_SECRET"),
+            'access_token': os.getenv("TWITTER_ACCESS_TOKEN"),
+            'access_secret': os.getenv("TWITTER_ACCESS_SECRET")
+        }
+        logger.info("Found OAuth credentials")
+    elif os.getenv("TWITTER_BEARER_TOKEN"):
+        twitter_credentials = {
+            'bearer_token': os.getenv("TWITTER_BEARER_TOKEN")
+        }
+        logger.info("Found Bearer Token")
+    else:
+        logger.error("❌ No Twitter credentials found!")
+        logger.error("Set either:")
+        logger.error("  1. TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET")
+        logger.error("  2. TWITTER_BEARER_TOKEN")
+        exit(1)
+    
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("❌ TELEGRAM_BOT_TOKEN tidak ditemukan!")
         exit(1)
     
     try:
-        bot = TwitterFollowingTracker(TWITTER_BEARER_TOKEN, TELEGRAM_BOT_TOKEN)
+        bot = TwitterFollowingTracker(twitter_credentials, TELEGRAM_BOT_TOKEN)
         bot.run()
     except Exception as e:
         logger.error(f"Bot crash: {e}")
