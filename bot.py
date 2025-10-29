@@ -45,8 +45,20 @@ CHAINS = {
 }
 
 class TwitterFollowingTracker:
-    def __init__(self, twitter_bearer_token, telegram_bot_token):
-        self.twitter_client = tweepy.Client(bearer_token=twitter_bearer_token)
+    def __init__(self, twitter_credentials, telegram_bot_token):
+        # Try using API keys first, fallback to bearer token
+        if all(k in twitter_credentials for k in ['api_key', 'api_secret', 'access_token', 'access_secret']):
+            self.twitter_client = tweepy.Client(
+                consumer_key=twitter_credentials['api_key'],
+                consumer_secret=twitter_credentials['api_secret'],
+                access_token=twitter_credentials['access_token'],
+                access_token_secret=twitter_credentials['access_secret']
+            )
+            logger.info("Using OAuth 1.0a authentication")
+        else:
+            self.twitter_client = tweepy.Client(bearer_token=twitter_credentials['bearer_token'])
+            logger.info("Using Bearer Token authentication")
+        
         self.telegram_app = Application.builder().token(telegram_bot_token).build()
         
         self.tracked_accounts = {}
