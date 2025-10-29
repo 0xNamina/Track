@@ -486,7 +486,12 @@ Ketik /start_monitoring untuk mulai!
         self.telegram_app.add_handler(CallbackQueryHandler(self.chain_selection_callback, pattern='^chain_'))
         
         logger.info("🤖 Bot berjalan di Railway...")
-        self.telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+        # Use polling with drop_pending_updates to avoid conflicts
+        self.telegram_app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,  # Skip old updates
+            close_loop=False
+        )
 
 
 # ==================== MAIN ====================
