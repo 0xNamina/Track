@@ -1,6 +1,1 @@
 python-3.11.9
-```
-
-**Procfile:**
-```
-worker: python bot.py
