@@ -44,7 +44,7 @@ CHAINS = {
     'MULTI': {'name': 'Multi-Chain', 'emoji': '🌐'}
 }
 
-class TwitterTelegramTracker:
+class TwitterFollowingTracker:
     def __init__(self, twitter_bearer_token, telegram_bot_token):
         self.twitter_client = tweepy.Client(bearer_token=twitter_bearer_token)
         self.telegram_app = Application.builder().token(telegram_bot_token).build()
@@ -67,15 +67,14 @@ class TwitterTelegramTracker:
         
         welcome_msg = """
 ╔═══════════════════════╗
-║  🔍 TWITTER ACTIVITY BOT  ║
+║  👥 FOLLOWING TRACKER BOT  ║
 ╚═══════════════════════╝
 
-🎯 <b>Track Aktivitas Real-Time:</b>
+🎯 <b>Track Following Real-Time:</b>
 ━━━━━━━━━━━━━━━━━━━━━━
-📝 Tweet Baru
-🔁 Retweet
-💬 Reply/Komentar
-👥 Following Baru
+👥 Siapa yang baru di-follow
+📊 Detail profil target
+⏰ Notifikasi instant
 
 📋 <b>Perintah:</b>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -88,6 +87,8 @@ class TwitterTelegramTracker:
 
 💡 <b>Label chain untuk identifikasi CT
 mana yang aktif di chain apa</b>
+
+⚡ <b>Optimized untuk Twitter Free API</b>
         """
         await update.message.reply_text(welcome_msg, parse_mode='HTML')
         logger.info(f"User baru: {chat_id}")
@@ -141,6 +142,7 @@ mana yang aktif di chain apa</b>
 👤 @{username}
 📝 {self.escape_html(user.data.name)}
 👥 {user.data.public_metrics['followers_count']:,} followers
+➡️ {user.data.public_metrics['following_count']:,} following
 
 ⛓️ <b>Pilih Chain:</b>
 Label untuk identifikasi CT ini aktif di chain mana
@@ -168,15 +170,27 @@ Label untuk identifikasi CT ini aktif di chain mana
         user_data = pending['user_data']
         
         try:
+            # Initialize following list
+            init_msg = await query.edit_message_text("⏳ Memuat following list awal...")
+            
+            following = self.twitter_client.get_users_following(
+                id=user_data.id,
+                max_results=1000,
+                user_fields=['name', 'username', 'public_metrics']
+            )
+            
+            following_set = set()
+            if following.data:
+                following_set = {user.id for user in following.data}
+            
             self.tracked_accounts[username] = {
                 'id': user_data.id,
                 'name': user_data.name,
                 'chain': chain_code,
                 'followers': user_data.public_metrics['followers_count'],
-                'following': user_data.public_metrics['following_count'],
-                'last_tweet_id': None,
-                'last_check': datetime.now(),
-                'following_list': set()
+                'following_count': user_data.public_metrics['following_count'],
+                'following_list': following_set,
+                'last_check': datetime.now()
             }
             
             chain_info = CHAINS[chain_code]
@@ -186,13 +200,14 @@ Label untuk identifikasi CT ini aktif di chain mana
 👤 @{username}
 📝 {self.escape_html(user_data.name)}
 ⛓️ {chain_info['emoji']} {chain_info['name']}
+➡️ Tracking {len(following_set)} following
 
 Ketik /start_monitoring untuk mulai!
             """
-            await query.edit_message_text(msg, parse_mode='HTML')
+            await init_msg.edit_text(msg, parse_mode='HTML')
             
             del self.pending_adds[chat_id]
-            logger.info(f"Ditambahkan: @{username} ({chain_code})")
+            logger.info(f"Ditambahkan: @{username} ({chain_code}) - {len(following_set)} following")
             
         except Exception as e:
             await query.edit_message_text(f"❌ Error: {str(e)}")
@@ -222,7 +237,9 @@ Ketik /start_monitoring untuk mulai!
             
             msg += f"\n{chain_info['emoji']} <b>{chain_info['name']}</b>\n"
             for username, data in accounts:
+                following_count = len(data['following_list'])
                 msg += f"  • @{username} - {self.escape_html(data['name'])}\n"
+                msg += f"    ➡️ {following_count} following\n"
         
         msg += f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
         msg += f"📊 Total: {len(self.tracked_accounts)} akun"
@@ -244,141 +261,91 @@ Ketik /start_monitoring untuk mulai!
         else:
             await update.message.reply_text(f"❌ @{username} tidak ditemukan")
     
-    async def check_activities(self):
-        """Cek semua aktivitas user"""
+    async def check_following(self):
+        """Cek following baru untuk semua tracked accounts"""
         for username, data in self.tracked_accounts.items():
             try:
-                # CEK TWEETS & RETWEETS & REPLIES
-                tweets = self.twitter_client.get_users_tweets(
+                logger.info(f"Checking @{username}...")
+                
+                # Get current following list
+                following = self.twitter_client.get_users_following(
                     id=data['id'],
-                    max_results=10,
-                    since_id=data['last_tweet_id'],
-                    tweet_fields=['created_at', 'referenced_tweets'],
-                    expansions=['referenced_tweets.id']
+                    max_results=1000,
+                    user_fields=['name', 'username', 'public_metrics', 'description', 'created_at']
                 )
                 
-                if tweets.data:
-                    data['last_tweet_id'] = tweets.data[0].id
+                if following.data:
+                    current_following = {user.id for user in following.data}
                     
-                    for tweet in reversed(tweets.data):
-                        is_retweet = False
-                        is_reply = False
+                    # Detect new follows
+                    if data['following_list']:
+                        new_follows = current_following - data['following_list']
                         
-                        if tweet.referenced_tweets:
-                            for ref in tweet.referenced_tweets:
-                                if ref.type == 'retweeted':
-                                    is_retweet = True
-                                elif ref.type == 'replied_to':
-                                    is_reply = True
-                        
-                        if is_retweet:
-                            await self.notify_retweet(username, tweet, data['name'], data['chain'])
-                        elif is_reply:
-                            await self.notify_reply(username, tweet, data['name'], data['chain'])
-                        else:
-                            await self.notify_tweet(username, tweet, data['name'], data['chain'])
-                
-                # CEK FOLLOWING BARU
-                try:
-                    following = self.twitter_client.get_users_following(
-                        id=data['id'],
-                        max_results=100,
-                        user_fields=['name', 'username', 'public_metrics']
-                    )
+                        if new_follows:
+                            logger.info(f"Found {len(new_follows)} new follows for @{username}")
+                            new_users = [user for user in following.data if user.id in new_follows]
+                            
+                            for new_user in new_users:
+                                await self.notify_new_follow(username, new_user, data['name'], data['chain'])
+                                await asyncio.sleep(1)  # Delay between notifications
                     
-                    if following.data:
-                        current_following = {user.id for user in following.data}
-                        
-                        if data['following_list']:
-                            new_follows = current_following - data['following_list']
-                            if new_follows:
-                                new_users = [user for user in following.data if user.id in new_follows]
-                                for new_user in new_users[:5]:
-                                    await self.notify_new_follow(username, new_user, data['name'], data['chain'])
-                        
-                        data['following_list'] = current_following
-                except Exception as e:
-                    logger.error(f"Error cek following @{username}: {e}")
+                    # Update following list
+                    data['following_list'] = current_following
+                    data['following_count'] = len(current_following)
+                    data['last_check'] = datetime.now()
                 
-            except tweepy.errors.TooManyRequests:
-                logger.warning("Rate limit, menunggu...")
-                await asyncio.sleep(900)
+                # Delay between accounts to avoid rate limit
+                await asyncio.sleep(60)  # 1 menit per akun
+                
+            except tweepy.errors.TooManyRequests as e:
+                logger.warning(f"⚠️ Rate limit hit! Menunggu 15 menit...")
+                await self.send_to_all("⚠️ <b>Rate Limit Twitter API</b>\n\nBot pause 15 menit untuk avoid ban")
+                await asyncio.sleep(900)  # Wait 15 minutes
+            except tweepy.errors.Forbidden as e:
+                logger.error(f"❌ Forbidden: {e}")
+                await self.send_to_all(f"❌ <b>Twitter API Error</b>\n\nCek Bearer Token atau akses API")
+                break
             except Exception as e:
                 logger.error(f"Error cek @{username}: {e}")
-            
-            await asyncio.sleep(3)
-    
-    async def notify_tweet(self, username, tweet, display_name, chain):
-        """Notifikasi tweet baru"""
-        chain_info = CHAINS[chain]
-        text = self.escape_html(tweet.text)
-        
-        msg = f"""
-📝 <b>TWEET BARU</b>
-
-👤 @{username} ({self.escape_html(display_name)})
-⛓️ {chain_info['emoji']} {chain_info['name']}
-
-{text[:400]}{'...' if len(tweet.text) > 400 else ''}
-
-🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
-⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
-        """
-        await self.send_to_all(msg)
-    
-    async def notify_retweet(self, username, tweet, display_name, chain):
-        """Notifikasi retweet"""
-        chain_info = CHAINS[chain]
-        text = self.escape_html(tweet.text)
-        
-        msg = f"""
-🔁 <b>RETWEET</b>
-
-👤 @{username} ({self.escape_html(display_name)})
-⛓️ {chain_info['emoji']} {chain_info['name']}
-
-{text[:400]}{'...' if len(tweet.text) > 400 else ''}
-
-🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
-⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
-        """
-        await self.send_to_all(msg)
-    
-    async def notify_reply(self, username, tweet, display_name, chain):
-        """Notifikasi reply/comment"""
-        chain_info = CHAINS[chain]
-        text = self.escape_html(tweet.text)
-        
-        msg = f"""
-💬 <b>REPLY/KOMENTAR</b>
-
-👤 @{username} ({self.escape_html(display_name)})
-⛓️ {chain_info['emoji']} {chain_info['name']}
-
-{text[:400]}{'...' if len(tweet.text) > 400 else ''}
-
-🔗 <a href="https://twitter.com/{username}/status/{tweet.id}">Lihat Tweet</a>
-⏰ {tweet.created_at.strftime('%d/%m/%Y %H:%M')}
-        """
-        await self.send_to_all(msg)
+                await asyncio.sleep(10)
     
     async def notify_new_follow(self, username, new_user, display_name, chain):
         """Notifikasi following baru"""
         chain_info = CHAINS[chain]
         
+        # Get account age
+        account_age = ""
+        if hasattr(new_user, 'created_at') and new_user.created_at:
+            created = new_user.created_at
+            age_days = (datetime.now(created.tzinfo) - created).days
+            if age_days < 30:
+                account_age = f"\n⚠️ Akun baru ({age_days} hari)"
+            elif age_days < 365:
+                account_age = f"\n📅 Akun {age_days // 30} bulan"
+            else:
+                account_age = f"\n📅 Akun {age_days // 365} tahun"
+        
+        # Get bio
+        bio = ""
+        if hasattr(new_user, 'description') and new_user.description:
+            bio_text = self.escape_html(new_user.description[:150])
+            bio = f"\n📝 {bio_text}{'...' if len(new_user.description) > 150 else ''}"
+        
         msg = f"""
-👥 <b>FOLLOWING BARU</b>
+👥 <b>FOLLOWING BARU!</b>
 
-👤 @{username} ({self.escape_html(display_name)})
+🎯 <b>@{username}</b> ({self.escape_html(display_name)})
 ⛓️ {chain_info['emoji']} {chain_info['name']}
 
-🆕 Baru follow:
-👤 @{new_user.username}
+━━━━━━━━━━━━━━━━━━━━
+🆕 <b>Baru Follow:</b>
+
+👤 <a href="https://twitter.com/{new_user.username}">@{new_user.username}</a>
 📝 {self.escape_html(new_user.name)}
 👥 {new_user.public_metrics['followers_count']:,} followers
+💬 {new_user.public_metrics['tweet_count']:,} tweets{bio}{account_age}
 
-🔍 <a href="https://twitter.com/{new_user.username}">Cek Profil</a>
-⏰ {datetime.now().strftime('%d/%m/%Y %H:%M')}
+⏰ {datetime.now().strftime('%d/%m/%Y %H:%M WIB')}
         """
         await self.send_to_all(msg)
     
@@ -390,7 +357,7 @@ Ketik /start_monitoring untuk mulai!
                     chat_id=chat_id,
                     text=message,
                     parse_mode='HTML',
-                    disable_web_page_preview=True
+                    disable_web_page_preview=False
                 )
             except Exception as e:
                 logger.error(f"Error kirim ke {chat_id}: {e}")
@@ -400,8 +367,9 @@ Ketik /start_monitoring untuk mulai!
         logger.info("Monitoring dimulai")
         while self.monitoring:
             if self.tracked_accounts:
-                await self.check_activities()
-            await asyncio.sleep(60)
+                await self.check_following()
+            else:
+                await asyncio.sleep(30)
     
     async def start_monitoring_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start monitoring"""
@@ -420,14 +388,20 @@ Ketik /start_monitoring untuk mulai!
         context.application.create_task(self.monitoring_loop(context))
         
         chain_counts = {}
+        total_following = 0
         for data in self.tracked_accounts.values():
             chain = data['chain']
             chain_counts[chain] = chain_counts.get(chain, 0) + 1
+            total_following += len(data['following_list'])
         
         chains_text = "\n".join([
             f"  {CHAINS[c]['emoji']} {CHAINS[c]['name']}: {count} akun"
             for c, count in sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)
         ])
+        
+        # Calculate check interval
+        accounts_count = len(self.tracked_accounts)
+        cycle_time = accounts_count * 1  # 1 menit per akun
         
         msg = f"""
 ✅ <b>Monitoring Aktif!</b>
@@ -435,8 +409,12 @@ Ketik /start_monitoring untuk mulai!
 📊 Tracking:
 {chains_text}
 
-⏱️ Interval: 60 detik
+➡️ Total: {total_following} following dipantau
+⏱️ Check interval: ~{cycle_time} menit per cycle
+⚠️ Twitter Free API: 15 req/15min limit
 📢 Notifikasi: Real-time
+
+<i>Rekomendasi: Track maksimal 5 akun untuk hasil optimal</i>
         """
         await update.message.reply_text(msg, parse_mode='HTML')
         logger.info("Monitoring dimulai")
@@ -453,14 +431,22 @@ Ketik /start_monitoring untuk mulai!
         status_text = "AKTIF" if self.monitoring else "TIDAK AKTIF"
         
         chain_counts = {}
+        total_following = 0
         for data in self.tracked_accounts.values():
             chain = data['chain']
             chain_counts[chain] = chain_counts.get(chain, 0) + 1
+            total_following += len(data['following_list'])
         
         chains_list = "\n".join([
             f"  {CHAINS[c]['emoji']} {CHAINS[c]['name']}: {count}"
             for c, count in sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)
         ]) if chain_counts else "  Belum ada"
+        
+        # Last check info
+        last_check = ""
+        if self.tracked_accounts:
+            latest = max(self.tracked_accounts.values(), key=lambda x: x['last_check'])
+            last_check = f"\n🕐 Last check: {latest['last_check'].strftime('%H:%M:%S')}"
         
         msg = f"""
 📊 <b>Status Bot</b>
@@ -468,7 +454,8 @@ Ketik /start_monitoring untuk mulai!
 {status_icon} {status_text}
 
 👥 Total: {len(self.tracked_accounts)} akun
-📢 Subscribers: {len(self.chat_ids)}
+➡️ Monitoring: {total_following} following
+📢 Subscribers: {len(self.chat_ids)}{last_check}
 
 ⛓️ Per Chain:
 {chains_list}
@@ -501,7 +488,7 @@ if __name__ == "__main__":
         exit(1)
     
     try:
-        bot = TwitterTelegramTracker(TWITTER_BEARER_TOKEN, TELEGRAM_BOT_TOKEN)
+        bot = TwitterFollowingTracker(TWITTER_BEARER_TOKEN, TELEGRAM_BOT_TOKEN)
         bot.run()
     except Exception as e:
         logger.error(f"Bot crash: {e}")
